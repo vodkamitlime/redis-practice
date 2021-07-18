@@ -3,11 +3,24 @@ const axios = require('axios');
 const cors = require('cors');
 const Redis = require('redis');
 
+const session = require('express-session')
+let RedisStore = require('connect-redis')(session)
+
 const redisClient = new Redis.createClient(); // use default parameters or use url (localhost === default)
 const DEFAULT_EXPIRATION = 3600 //seconds 
 
 const app = express()
 app.use(cors())
+
+// use redis for session store 
+app.use(session({
+    secret: "secret",
+    saveUninitialized: false,
+    resave: false,
+    store: new RedisStore(redisClient)
+}))
+
+// let store = new RedisStore({ client: redisClient })
 
 // // get all photos from api
 // app.get('/photos', async(req, res) => {
@@ -19,7 +32,7 @@ app.use(cors())
 //     res.json(data)
 // })
 
-// check if redis server has data, if not get from api, store in redis and return
+// // check if redis server has data, if not get from api, store in redis and return
 // app.get('/photos', async(req, res) => {
 //     const albumId = req.query.albumId
 //     redisClient.get('photos', async (err, data) => { // check data from redis server 
@@ -36,7 +49,7 @@ app.use(cors())
 //             res.json(data)
 //         }
 //     })
-// })
+///})
 
 // on first request, data is retrieved from api server (1200ms)
 // on second + request, data is retrieved from redis server (20ms)
@@ -63,7 +76,6 @@ app.get('/photos', async(req, res) => {
     const photos = await getorSetCache(`photos`, async () => {
         const {data} = await axios.get(
             'https://jsonplaceholder.typicode.com/photos',
-            {params : {albumId}}
             )
             return data
         })
