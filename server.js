@@ -2,6 +2,9 @@ const express = require('express');
 const axios = require('axios');
 const cors = require('cors');
 const Redis = require('redis');
+const cheerio = require('cheerio');
+const iconv = require('iconv-lite');
+iconv.skipDecodeWarning = true
 
 const session = require('express-session')
 let RedisStore = require('connect-redis')(session)
@@ -93,6 +96,54 @@ app.get('/photos/:id', async(req, res) => {
         return data;
     })
     res.json(photo)
+})
+
+// 보안뉴스 크롤링 함수 
+
+const getSecurity = async () => {
+
+    let articles = [];
+
+    let CRAWL_URL = `https://www.boannews.com/media/t_list.asp`
+    const html = await axios.get(CRAWL_URL, {
+        responseEncoding: 'binary'
+    });
+    const htmlData = iconv.decode(html.data, 'euc-kr').toString();
+    const $ = cheerio.load(htmlData);
+
+    for (let i=0; i<=5; i++){
+        const article = $('.news_list')[i]
+        const url = $(article).find('a').attr('href')
+        const title = $(article).find('.news_txt').text();
+        const content = $(article).find('.news_content').text();
+        const date = $(article).find('.news_writer').text();
+        let DATA = {
+            "article_title": title,
+            "article_content": content,
+            "article_date": date.split('| ')[1],
+            "article_url": 'https://www.boannews.com/' + url, 
+            "article_keyword": "보안"
+        }
+        articles.push(DATA); 
+    }
+    return articles;
+}
+
+// Practice with crawling code 
+app.get('/crawl', async(req, res) => {
+    redisClient.get('articles', async (err, data) => { // check data from redis server 
+        if (err) console.error(error)
+        if (data) {
+            console.log(JSON.parse(data))
+            res.json('cache hit!') 
+        } else { 
+            getSecurity().then(data => {
+                redisClient.setex('articles', 10, JSON.stringify(data))
+                console.log(data)
+                res.json('cache miss!')
+            })
+        }
+    })
 })
 
 app.listen(3001, () => console.log('Listening on port 3001'))
