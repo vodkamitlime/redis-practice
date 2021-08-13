@@ -146,4 +146,20 @@ app.get('/crawl', async(req, res) => {
     })
 })
 
+// practice write-back method 
+app.get('/writeback', async(req, res) => {
+
+    let num = await redisClient.incr('hit')
+    redisClient.get('hit', async (err, data) => {
+        if (err) console.error(error)
+        if (!data) {
+            res.send('no cache')
+        }
+        if (data) {
+            res.send(data)
+        }
+    })
+})
+// increment hit every time get request received, then save to DB           
+
 app.listen(3001, () => console.log('Listening on port 3001'))
