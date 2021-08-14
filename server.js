@@ -160,6 +160,30 @@ app.get('/writeback', async(req, res) => {
         }
     })
 })
-// increment hit every time get request received, then save to DB           
+// increment hit every time get request received, then save to DB         
+
+// practice write-through method
+app.get('/writethrough/db', async(req, res) => {
+    let number = parseInt(Math.random() * 100)
+    console.log(`db key "temp" changed to ${number}!`)
+    redisClient.set('temp', number)
+    setTimeout(() => {
+        return res.send(`db updated, new value stored is ${number}`)
+    }, 500)
+})
+
+app.get('/writethrough/cache', async(req, res) => {
+
+    redisClient.get('temp', async (err, data) => {
+        if (err) console.error(error)
+        if (!data) {
+            res.send('no cache')
+        }
+        if (data) {
+            res.send(data)
+        }
+    })
+})
+// update cache every time DB is updated
 
 app.listen(3001, () => console.log('Listening on port 3001'))
