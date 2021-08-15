@@ -186,4 +186,11 @@ app.get('/writethrough/cache', async(req, res) => {
 })
 // update cache every time DB is updated
 
+// Cache logic for hit update articles :
+// every time Article is crawled -> Update DB -> Save cache
+// Cache: make a hash that contains every article according to its id
+// Whenever user visits article link, update DB & cache 
+// Set TTL for Cache so it updates entire DB regularly
+
+
 app.listen(3001, () => console.log('Listening on port 3001'))
