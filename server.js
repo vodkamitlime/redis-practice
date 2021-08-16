@@ -192,5 +192,28 @@ app.get('/writethrough/cache', async(req, res) => {
 // Whenever user visits article link, update DB & cache 
 // Set TTL for Cache so it updates entire DB regularly
 
+// testing 
+app.get('/increase/:id', async (req, res) => {
+
+    const id = req.params.id;
+    await redisClient.hincrby('testArticles', `article${id}`, 1)
+    res.send('ok')
+    
+})
+
+app.get('/articles', async (req, res) => {
+    
+    redisClient.hgetall('testArticles', async (err, data) => {
+        if (err) console.error(error)
+        if (!data) {
+            for (let i=0; i<=10; i++) {
+                redisClient.hset('testArticles', `article${i}`, 0)
+            }
+            res.send('no cache, cache set')
+        } else {
+            res.send(data)
+        }
+    })
+})
 
 app.listen(3001, () => console.log('Listening on port 3001'))
