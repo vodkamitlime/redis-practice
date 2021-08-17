@@ -216,4 +216,37 @@ app.get('/articles', async (req, res) => {
     })
 })
 
+// make promise with redis commands
+
+const checkCacheForArticles = async () => {
+    
+    return new Promise((resolve, reject) => {
+        
+        redisClient.hgetall('recentArticles', async (err, articles) => {
+        
+        if (err) {
+            reject(err);
+        }
+
+        // cache miss
+        if (!articles) { 
+            const articlesFromDB = await getArticlesPastTwoWeeks();
+            resolve(articlesFromDB, 'DB');  
+        }
+
+        // cache hit
+        if (articles) { 
+            let articleData = [];
+            for (let key in articles) {
+                articleData.push(JSON.parse(articles[key]))
+            }
+            resolve(articleData, 'cache');
+        }
+
+        });
+
+    })
+
+}
+
 app.listen(3001, () => console.log('Listening on port 3001'))
