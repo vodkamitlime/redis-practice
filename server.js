@@ -249,4 +249,37 @@ const checkCacheForArticles = async () => {
 
 }
 
+
+const updateArticleHit = async (id) => {
+    
+    try {
+
+        Article.findOneAndUpdate({
+                article_id: id
+            }, {
+                $inc: {
+                    hit: 1
+                }
+            }, {
+                projection: {
+                    _id: 0,
+                    __v: 0
+                }
+            }, (err, data) => {
+                if (err) {
+                    throw err;
+                }
+                redisClient.hmset('recentArticles', id, JSON.stringify(data));
+                return true;
+            }
+        )
+        
+    } catch (err) {
+
+        return err;
+
+    }
+
+}
+
 app.listen(3001, () => console.log('Listening on port 3001'))
