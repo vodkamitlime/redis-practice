@@ -1,19 +1,14 @@
+const { getArticlesFromBoanNews } = require('./crawler')
 const express = require('express');
-const axios = require('axios');
 const cors = require('cors');
-const Redis = require('redis');
-const cheerio = require('cheerio');
-const iconv = require('iconv-lite');
-iconv.skipDecodeWarning = true
-
+const axios = require('axios');
+const redis = require('redis');
 const session = require('express-session')
-let RedisStore = require('connect-redis')(session)
+const RedisStore = require('connect-redis')(session)
 
-const redisClient = new Redis.createClient(); // use default parameters or use url (localhost === default)
-const DEFAULT_EXPIRATION = 3600 //seconds 
-
+const redisClient = new redis.createClient(); // use default parameters or use url (localhost === default)
+const DEFAULT_EXPIRATION = 60 //seconds 
 const app = express()
-app.use(cors())
 
 // use redis for session store 
 app.use(session({
@@ -22,263 +17,206 @@ app.use(session({
     resave: false,
     store: new RedisStore(redisClient)
 }))
+app.use(cors())
 
-// let store = new RedisStore({ client: redisClient })
+// Practice 1) 
+// 1. Check if redis server has data
+// 2. If not, get data from api
+// 3. Store data in redis and return data
+app.get('/photos?:albumId', async(req, res) => {
 
-// // get all photos from api
-// app.get('/photos', async(req, res) => {
-//     const albumId = req.query.albumId
-//     const {data} = await axios.get(
-//         'https://jsonplaceholder.typicode.com/photos',
-//         {params : {albumId}},
-//         )
-//     res.json(data)
-// })
+    const albumId = req.query.albumId
 
-// // check if redis server has data, if not get from api, store in redis and return
-// app.get('/photos', async(req, res) => {
-//     const albumId = req.query.albumId
-//     redisClient.get('photos', async (err, data) => { // check data from redis server 
-//         if (err) console.error(error)
-//         if (data) {
-//             res.json(JSON.parse(data)) // cache hit
-//         } else {  // cache miss 
-//             const {data} = await axios.get(
-//                 'https://jsonplaceholder.typicode.com/photos',
-//                 {params : {albumId}},
-//                 )
-//             redisClient.setex('photos', DEFAULT_EXPIRATION, JSON.stringify(data)) // set with an expiration time (or can use other redis expressions
-//             // redis can only store strings, so we need to convert the data to a string        
-//             res.json(data)
-//         }
-//     })
-///})
+    redisClient.get(`photo${albumId}`, async (err, result) => {  
 
-// on first request, data is retrieved from api server (1200ms)
-// on second + request, data is retrieved from redis server (20ms)
-// if i set cache with individual id, response speeds up even more 
-// ex setex('photos?albumId={albumID}'....)
+        if (err) {
+            console.error(error)
+        }
 
+        // cache hit
+        if (result) {
+            return res.json({
+                "data": JSON.parse(result),
+                "message": "Cache hit!",
+                "source": "Cache"
+            }) 
+        } 
 
+        // cache miss 
+        const { data } = await axios.get('https://jsonplaceholder.typicode.com/photos',{
+            params : { albumId }
+        })
 
-// make a function to store cache if there isn't already one
-function getorSetCache(key, callback) {
+        redisClient.setex(`photo${albumId}`, DEFAULT_EXPIRATION, JSON.stringify(data)) 
+
+        return res.json({
+            data,
+            "message": "Cache successfully saved!",
+            "source": "API"
+        })
+
+    })
+
+})
+
+// Practice 2)
+// 1. Make a function for checking & storing cache if null 
+// 2. Use callback function to return data from API 
+const getorSetCache = (key, callback) => {
+
     return new Promise((resolve, reject) => {
+
         redisClient.get(key, async (err, data) => {
-            if(err) return reject(err)
-            if(data) return resolve(JSON.parse(data))
-            const freshestData = await callback()
+
+            if (err) {
+                return reject(err)
+            }
+
+            if (data) {
+                return resolve(JSON.parse(data))
+            }
+
+            const freshestData = await callback();
             redisClient.setex(key, DEFAULT_EXPIRATION, JSON.stringify(freshestData))
             resolve(freshestData)
         })
+
     })
+
 }
 
-// use function to get cache & send callback using axios for db/api 
 app.get('/photos', async(req, res) => {
+
     const photos = await getorSetCache(`photos`, async () => {
-        const {data} = await axios.get(
-            'https://jsonplaceholder.typicode.com/photos',
-            )
-            return data
-        })
-    res.json(photos)
-})
 
+        const {data} = await axios.get('https://jsonplaceholder.typicode.com/photos')
+        return data
 
-// get individual photo
-app.get('/photos/:id', async(req, res) => {
-    const id = req.params.id;
-    const photo = await getorSetCache(`photo:${id}`, async () => {
-        const {data} = await axios.get(
-            'https://jsonplaceholder.typicode.com/photos/' + id,
-        )
-        return data;
     })
-    res.json(photo)
+
+    return res.json({
+        "data": photos,
+        "message": "Data successfully retrieved!"
+    })
+
 })
 
-// 보안뉴스 크롤링 함수 
+app.get('/photos/:id', async(req, res) => {
 
-const getSecurity = async () => {
+    const id = req.params.id;
 
-    let articles = [];
+    const photo = await getorSetCache(`photo:${id}`, async () => {
 
-    let CRAWL_URL = `https://www.boannews.com/media/t_list.asp`
-    const html = await axios.get(CRAWL_URL, {
-        responseEncoding: 'binary'
-    });
-    const htmlData = iconv.decode(html.data, 'euc-kr').toString();
-    const $ = cheerio.load(htmlData);
+        const {data} = await axios.get(`https://jsonplaceholder.typicode.com/photos/${id}`)
+        return data;
 
-    for (let i=0; i<=5; i++){
-        const article = $('.news_list')[i]
-        const url = $(article).find('a').attr('href')
-        const title = $(article).find('.news_txt').text();
-        const content = $(article).find('.news_content').text();
-        const date = $(article).find('.news_writer').text();
-        let DATA = {
-            "article_title": title,
-            "article_content": content,
-            "article_date": date.split('| ')[1],
-            "article_url": 'https://www.boannews.com/' + url, 
-            "article_keyword": "보안"
-        }
-        articles.push(DATA); 
-    }
-    return articles;
-}
+    })
+    
+    return res.json({
+        "data": photo,
+        "message": "Data successfully retrieved!"
+    })
 
-// Practice with crawling code 
+})
+
+// Practice 3)
+// 1. Check Cache for articles
+// 2. Cache miss => Run crawler => set cache
+// 3. Cache hit => Return data from cache 
 app.get('/crawl', async(req, res) => {
-    redisClient.get('articles', async (err, data) => { // check data from redis server 
-        if (err) console.error(error)
+
+    redisClient.get('articles', async (err, data) => { 
+
+        if (err) {
+            console.error(error)
+        }
+
         if (data) {
-            console.log(JSON.parse(data))
-            res.json('cache hit!') 
+            return res.json({
+                "data": JSON.parse(data),
+                "message": "Cache hit!",
+            }) 
         } else { 
-            getSecurity().then(data => {
+            getArticlesFromBoanNews().then(data => {
+
                 redisClient.setex('articles', 10, JSON.stringify(data))
-                console.log(data)
-                res.json('cache miss!')
+                return res.json({
+                    "data": data,
+                    "message": "Cache miss!"
+                })
             })
         }
     })
 })
 
-// practice write-back method 
+// Practice 4) Write-back method 
+// Whenever request is made, make changes to cache
+// Save cache to DB after a while
 app.get('/writeback', async(req, res) => {
 
-    let num = await redisClient.incr('hit')
     redisClient.get('hit', async (err, data) => {
-        if (err) console.error(error)
-        if (!data) {
-            res.send('no cache')
-        }
-        if (data) {
-            res.send(data)
-        }
-    })
-})
-// increment hit every time get request received, then save to DB         
 
-// practice write-through method
-app.get('/writethrough/db', async(req, res) => {
+        if (err) {
+            console.error(error)
+        }
+
+        if (!data) {
+            redisClient.setex('hit', 60 * 60, '1')
+            return res.send('Cache set to 1!')
+        }
+        
+        redisClient.incr('hit')
+        console.log('Increment 1 at DB')
+
+        if (Number(data) % 10 === 0) {
+            console.log('Save cache to DB')
+            return res.send(`Cache saved to DB at hit: ${data}`)
+        }
+
+        return res.send(`Cache incremented! Current hit at: ${data}`)
+
+    })
+
+})
+    
+// Practice 5) Write-through method
+// Whenever request is made, make changes to cache & DB 
+app.get('/writethrough', async(req, res) => {
+
     let number = parseInt(Math.random() * 100)
     console.log(`db key "temp" changed to ${number}!`)
     redisClient.set('temp', number)
+
     setTimeout(() => {
-        return res.send(`db updated, new value stored is ${number}`)
+        return res.send(`DB & cache updated, new value stored is ${number}`)
     }, 500)
+
 })
 
-app.get('/writethrough/cache', async(req, res) => {
-
-    redisClient.get('temp', async (err, data) => {
-        if (err) console.error(error)
-        if (!data) {
-            res.send('no cache')
-        }
-        if (data) {
-            res.send(data)
-        }
-    })
-})
-// update cache every time DB is updated
-
-// Cache logic for hit update articles :
-// every time Article is crawled -> Update DB -> Save cache
-// Cache: make a hash that contains every article according to its id
-// Whenever user visits article link, update DB & cache 
-// Set TTL for Cache so it updates entire DB regularly
-
-// testing 
-app.get('/increase/:id', async (req, res) => {
-
-    const id = req.params.id;
-    await redisClient.hincrby('testArticles', `article${id}`, 1)
-    res.send('ok')
-    
-})
-
-app.get('/articles', async (req, res) => {
-    
-    redisClient.hgetall('testArticles', async (err, data) => {
-        if (err) console.error(error)
-        if (!data) {
-            for (let i=0; i<=10; i++) {
-                redisClient.hset('testArticles', `article${i}`, 0)
-            }
-            res.send('no cache, cache set')
-        } else {
-            res.send(data)
-        }
-    })
-})
-
-// make promise with redis commands
-
-const checkCacheForArticles = async () => {
+// Practice 6) Make promises with redis commands
+const checkCacheForArticles = () => {
     
     return new Promise((resolve, reject) => {
         
-        redisClient.hgetall('recentArticles', async (err, articles) => {
+        redisClient.hgetall('recentArticles', (err, articles) => {
         
-        if (err) {
-            reject(err);
-        }
-
-        // cache miss
-        if (!articles) { 
-            const articlesFromDB = await getArticlesPastTwoWeeks();
-            resolve(articlesFromDB, 'DB');  
-        }
-
-        // cache hit
-        if (articles) { 
-            let articleData = [];
-            for (let key in articles) {
-                articleData.push(JSON.parse(articles[key]))
+            if (err) {
+                reject(err);
             }
-            resolve(articleData, 'cache');
-        }
+
+            // cache miss
+            if (!articles) { 
+                resolve('no cache');  
+            }
+
+            // cache hit
+            if (articles) { 
+                resolve('cache');
+            }
 
         });
 
     })
-
-}
-
-
-const updateArticleHit = async (id) => {
-    
-    try {
-
-        Article.findOneAndUpdate({
-                article_id: id
-            }, {
-                $inc: {
-                    hit: 1
-                }
-            }, {
-                projection: {
-                    _id: 0,
-                    __v: 0
-                }
-            }, (err, data) => {
-                if (err) {
-                    throw err;
-                }
-                redisClient.hmset('recentArticles', id, JSON.stringify(data));
-                return true;
-            }
-        )
-        
-    } catch (err) {
-
-        return err;
-
-    }
 
 }
 
